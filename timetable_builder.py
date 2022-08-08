@@ -7,6 +7,7 @@ from db import Database
 from models import (
     EventRealization, Room
 )
+from prettytable import PrettyTable
 
 
 class TimetableBuilder:
@@ -266,6 +267,7 @@ def calculate_fitness(data: Database, timetable: dict[str, EventRealization]) ->
     return 1 / (1 + sum(list(conflicts.values())))
 
 
+# сделать таблицу на имикн
 def pop_formation(data: Database, n_pop: int = 100):
     random.seed(0)
     ttb = TimetableBuilder(data)
@@ -278,7 +280,65 @@ def pop_formation(data: Database, n_pop: int = 100):
 
 #  Warning: tournament selection already chosen pairs are possible
 def tournament_selection(population: list[Individual]) -> list[Individual]:
+    CROSSOVER_PROB = 0.9
+    MUTATION_PROB = 0.1
     fst_pair = np.random.choice(population, 2)
     scnd_pair = np.random.choice(population, 2)
-    return [max(fst_pair, key=lambda x: x.fitness), max(scnd_pair, key=lambda x: x.fitness)]
+    fittest_couple = [max(fst_pair, key=lambda x: x.fitness), max(scnd_pair, key=lambda x: x.fitness)]
+    # action = random.choices([crossver(fittest_couple), ])
+    # return
 
+
+def crossover(couple: list[Individual]) -> list[dict[str, EventRealization]]:
+    partner_1 = list(couple[0].ttb.values())
+    partner_2 = list(couple[1].ttb.values())
+    crossovers_n = min(len(partner_1), len(partner_2))
+    for i in range(crossovers_n):
+        partner_1[i].grid_slot_id, partner_2[i].grid_slot_id = partner_2[i].grid_slot_id, partner_1[i].grid_slot_id
+        partner_1[i].date, partner_2[i].date = partner_2[i].date, partner_1[i].date
+    couple[0].ttb = partner_1
+    couple[1].ttb = partner_2
+    return [couple[0].ttb, couple[1].ttb]
+
+
+def mutation(data: Database, individual: Individual) -> dict[str, EventRealization]:
+    pos_to_change = random.randint(0, len(list(individual.ttb.values())))
+    what_to_change = random.randint(0, 1)
+    for i in range(len(individual.ttb.values())):
+        if i == pos_to_change:
+            if what_to_change == 0:
+                list(individual.ttb.values())[pos_to_change].grid_slot_id = data.grid_slots[
+                    random.randint(0, len(data.grid_slots))]
+            else:
+                list(individual.ttb.values())[pos_to_change].date = random.choice(
+                    list(individual.ttb.values())[random.randint(0, len(list(individual.ttb.values())))]).date
+
+
+def visualise_timetable(timetable: dict[str, EventRealization]) -> PrettyTable():
+    print(list(timetable.values()))
+    # lessons = [data.get_course_unit(list(i.keys())[0]).name for i in subjects]
+    # x = PrettyTable(["Time", "306", "404", "423"])
+    # rows = [
+    #     ["8:30-10:00", "-", "-", "-"],
+    #     ["10:15-11:45", "-", "-", "-"],
+    #     ["12:00-13:30", "-", "-", "-"],
+    #     ["14:00-15:30", "-", "-", "-"],
+    #     ["15:45-17:15", "-", "-", "-"],
+    #     ["15:45-17:15", "-", "-", "-"],
+    #     ["17:00-19:00", "-", "-", "-"],
+    #     ["19:10-20:40", "-", "-", "-"],
+    #     ["20:50-22:20", "-", "-", "-"]
+    # ]
+    #
+    # n = [i for i in range(9)]
+    # res = [[n[i], n[i + 1], n[i + 2]]
+    #        for i in range(len(n) - 2)]
+    # times = random.choice(res)
+    #
+    # rows[times[0]][1] = lessons[0]
+    # rows[times[1]][2] = lessons[1]
+    # rows[times[2]][3] = lessons[2]
+    #
+    # x.add_rows(rows)
+    # print(x)
+    # lessons = [data.get_course_unit(list(i.keys())[0]).name for i in subjects]
