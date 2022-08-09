@@ -10,7 +10,7 @@ from models import (
 from prettytable import PrettyTable
 import pandas as pd
 
-random.seed(0)
+# random.seed(0)
 
 
 # def calculate_exes(data: Database, timetable: dict[str, EventRealization]) -> float:
@@ -62,8 +62,8 @@ class TimetableBuilder:
             for event in events:
                 peaked = peak_room(event.capacity_required, rooms_sorted, math.ceil(event.capacity_required * 0.46))
                 rooms.append(peaked)
-            timetable: list[EventRealization] = [EventRealization(event.id, room.id, slot.id, day) for event, room, slot
-                                                 in zip(events, rooms, slots)]
+            for event, room, slot in zip(events, rooms, slots):
+                timetable.append(EventRealization(event.id, room.id, slot.id, day))
             with open("timetable.txt", 'w') as f:
                 f.write(str(timetable))
         return timetable
@@ -188,30 +188,34 @@ class Individual:
 
 class GeneticAlgorithm:
     def __init__(self, data: Database):
-        self.iterations = 10
-        self.population_size = 100
-        self.selected: list[Individual] = []
+        self.ITERATIONS = 50
+        self.POPULATION_SIZE = 100
+        self.MUTATION_PROB = 0.1
+        self.selected: list[list[Individual]] = []
         self.initial_population = self.generate_random_population(data)
 
-    def generate_random_population(self, data: Database):
+    def generate_random_population(self, data: Database) -> list[Individual]:
         """Generates random population of size 100."""
-        timetable = TimetableBuilder(data)
-        population = []
-        for i in range(self.population_size):
+        timetable: TimetableBuilder = TimetableBuilder(data)
+        population: list[Individual] = []
+        for i in range(self.POPULATION_SIZE):
             random_timetable = timetable.build_random()
             fitness = calculate_fitness(data, random_timetable)
             population.append(Individual(random_timetable, fitness))
         return population
 
-    def selection(self, population: list[Individual]) -> tuple[Individual, Individual]:
+    def selection(self, population: list[Individual]) -> list[Individual, Individual]:
         '''Selects 2 individual with a higher fitness from 2 random pairs.'''
-        if first_pair := random.sample(population, 2).sort(key=lambda x: x.fitness) not in self.selected:
+        if (
+                first_pair := sorted(random.sample(population, 2), reverse=True,
+                                     key=lambda x: x.fitness)) not in self.selected:
             self.selected.append(first_pair)
-        if second_pair := random.sample(population, 2).sort(key=lambda x: x.fitness) not in self.selected:
+        if (second_pair := sorted(random.sample(population, 2), reverse=True,
+                                  key=lambda x: x.fitness)) not in self.selected:
             self.selected.append(second_pair)
-        return first_pair[0], second_pair[0]
+        return [first_pair[0], second_pair[0]]
 
-    def crossover(self, data: Database, pair: tuple[Individual, Individual]) -> tuple[Individual, Individual]:
+    def crossover(self, data: Database, pair: list[Individual, Individual]) -> list[Individual, Individual]:
         n_genes_change = random.randint(1, 2)
         n_crossovers = min(len(pair[0].timetable), len(pair[1].timetable))
         if n_genes_change == 2:
@@ -234,32 +238,40 @@ class GeneticAlgorithm:
             pair[i].fitness = calculate_fitness(data, pair[i].timetable)
         return pair
 
+    def mutation(data: Database, individual: Individual) -> Individual:
+        rnd = random.randint(0, 1)
+        n = int(len(individual.timetable) * 0.1)
+        indices_to_change = random.choices(list(range(len(individual.timetable))), k=n)
+        if rnd == 0:
+            for i in range(n):
+                cur_grid_slot_id = individual.timetable[indices_to_change[i]].grid_slot_id
+                individual.timetable[indices_to_change[i]].grid_slot_id = random.choice(
+                    [i.grid_slot_id for i in individual.timetable if i.grid_slot_id != cur_grid_slot_id])
+
+        else:
+            for i in range(n):
+                cur_date = individual.timetable[indices_to_change[i]].date
+                individual.timetable[indices_to_change[i]].date = random.choice(
+                    [i.date for i in individual.timetable if i.grid_slot_id != cur_date])
+        individual.fitness = calculate_fitness(data, individual.timetable)
+        return individual
+
     def run(self, data: Database) -> list[Individual]:
         '''Runs GA to find an optimized timetable'''
-        for i in range(self.iterations):
+        next_population: list[Individual] = []
+        populations = [self.generate_random_population(data)]
+        for j in range(self.ITERATIONS):
+            for i in range(self.POPULATION_SIZE // 2):
+                pair = self.crossover(data, self.selection(populations[j]))
+                next_population.append(pair[0])
+                next_population.append(pair[1])
+            if random.random() <= self.MUTATION_PROB:
+                rnd_idx = random.randint(0, len(next_population) - 1)
+                next_population[rnd_idx] = self.mutation(next_population[rnd_idx])
+            populations.append(next_population)
             next_population = []
-
-            fittest_couple = selection(data, self.initial_population)
-            crossover(data, fittest_couple)
-            next_population.append(fittest_couple[0])
-            next_population.append(fittest_couple[1])
-        i += 1
-        print(len(next_population))
-        return genetic_algorithm(data, population=next_population)
-
-
-def mutation(data: Database, individual: Individual) -> Individual:
-    pos_to_change = random.randint(0, len(list(individual.timetable.values())))
-    what_to_change = random.randint(0, 1)
-    for i in range(len(individual.timetable.values())):
-        if i == pos_to_change:
-            if what_to_change == 0:
-                list(individual.timetable.values())[pos_to_change].grid_slot_id = data.grid_slots[
-                    random.randint(0, len(data.grid_slots))]
-            else:
-                list(individual.timetable.values())[pos_to_change].date = random.choice(
-                    list(individual.timetable.values())).date
-    return individual
+        print([len(i) for i in populations])
+        return populations[-1]
 
 
 def calculate_x2(timetable: list[EventRealization]) -> int:
@@ -300,35 +312,12 @@ def calculate_x11(timetable: list[EventRealization]) -> int:
     return len(saturdays)
 
 
-def grid_slot_conflicts(timetable: list[EventRealization]) -> int:
-    _grid_slot_conflicts = Counter({'time_con': 0})
-    for i in range(len(timetable)):
-        for j in range(i + 1, len(timetable)):
-            if timetable[i].date == timetable[j].date:
-                if timetable[i].grid_slot_id == timetable[j].grid_slot_id:
-                    _grid_slot_conflicts["time_con"] += 1
-    return list(_grid_slot_conflicts.values())[0]
-
-
-def capacity_conflicts(data: Database, timetable: list[EventRealization]) -> int:
-    capacity_conflicts: Counter[str, int] = Counter({"capacity_con": 0})
-    for i in range(len(timetable)):
-        if timetable[i].get_room(data.rooms).effective_capacity < len(
-                data.get_event_attendees_by_event(timetable[i].event_id)):
-            capacity_conflicts["capacity_con"] += 1
-    return list(capacity_conflicts.values())[0]
-
-
 def calculate_fitness(data: Database, timetable: list[EventRealization]) -> float:
     '''Calculates the fitness of a timetable instance.'''
-
     conflicts: Counter[str, int] = Counter()
-
     conflicts["x2"] = calculate_x2(timetable)
     conflicts["x3"] = calculate_x3(timetable)
     conflicts["x11"] = calculate_x11(timetable)
-    conflicts["grid_slot"] = grid_slot_conflicts(timetable)
-    conflicts["capacity"] = capacity_conflicts(data, timetable)
     print(conflicts)
     return 1 / (1 + sum(list(conflicts.values())))
 
