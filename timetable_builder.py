@@ -8,7 +8,23 @@ from models import (
     EventRealization, Room
 )
 from prettytable import PrettyTable
+import pandas as pd
 
+random.seed(0)
+
+
+# def calculate_exes(data: Database, timetable: dict[str, EventRealization]) -> float:
+# x1 - время затраченное в день на переход между корпусами (в день)
+# x2 - дней когда пар больше 4 (на неделю, с) +
+# x3 - окна (в день с) +
+# x4 - переезды (в день)
+# x5 - шаговая доступность кафедры (в день, п)
+# x6 - концентрированность пар (в день, п)
+# x7 - порядок изложения (на неделю)
+# x8 - напр 1 знания в 1 корпусе (в день)
+# x9 - 1 пара в день (день, с)
+# x10 - есть выходной (неделя, с)
+# x11 - больше 2 пар в субботу (неделя, с) +
 
 class TimetableBuilder:
     def __init__(
@@ -17,7 +33,8 @@ class TimetableBuilder:
     ):
         self._data = data
 
-    def _get_working_days(self) -> list[datetime]:
+    def get_working_days(self) -> list[datetime]:
+        """Gets all the working days in the semester."""
         working_days: list[datetime] = []
         start = datetime.datetime(2022, 2, 6)
         end = datetime.datetime(2022, 7, 10)
@@ -28,42 +45,27 @@ class TimetableBuilder:
                 working_days.append(day.date())
         return working_days
 
-    def build_random(self) -> dict[str, EventRealization]:
-        """Builds random timetable. Returns a map of `event_id` to `EventRealization`."""
+    def build_random(self) -> list[EventRealization]:
+        """Builds random timetable. Returns a list of `EventRealization`."""
         grid_ids: list[str] = [
-            "Grid.05.01",
-            "Grid.05.02",
-            "Grid.05.03",
-            "Grid.05.04",
-            "Grid.05.05",
-            "Grid.05.06",
-            "Grid.05.07",
-            "Grid.05.08"
-        ]
-        grid_slots_uni = [grid_slot for grid_slot in self._data.grid_slots if
-                          grid_slot.id in grid_ids]
-        working_days = self._get_working_days()
-        timetable: dict[str, EventRealization] = {}
+            "Grid.05.01", "Grid.05.02", "Grid.05.03", "Grid.05.04", "Grid.05.05", "Grid.05.06", "Grid.05.07",
+            "Grid.05.08"]
+        grid_slots_uni = [grid_slot for grid_slot in self._data.grid_slots if grid_slot.id in grid_ids]
+        working_days = self.get_working_days()
+        timetable: list[EventRealization] = []
         rooms_sorted = sorted(self._data.rooms, key=lambda x: x.effective_capacity)
         for day in working_days[:7]:
             slots = random.choices(grid_slots_uni, k=random.randint(2, 5))
             rooms = []
-            events = random.choices(
-                [event for event in self._data.events if event.capacity_required < 301],
-                k=len(slots)
-            )
+            events = random.choices([event for event in self._data.events if event.capacity_required < 301],
+                                    k=len(slots))
             for event in events:
-                peaked = peak_room(
-                    event.capacity_required, rooms_sorted, math.ceil(event.capacity_required * 0.46)
-                )
+                peaked = peak_room(event.capacity_required, rooms_sorted, math.ceil(event.capacity_required * 0.46))
                 rooms.append(peaked)
-
-            for event, room, slot in zip(events, rooms, slots):
-                timetable.setdefault(
-                    event.id, EventRealization(event.id, room.id, slot.id, day)
-                )
-            file = open("timetable.txt", 'w')
-            file.write(str(timetable))
+            timetable: list[EventRealization] = [EventRealization(event.id, room.id, slot.id, day) for event, room, slot
+                                                 in zip(events, rooms, slots)]
+            with open("timetable.txt", 'w') as f:
+                f.write(str(timetable))
         return timetable
 
     def build_optimized(self) -> dict[str, EventRealization]:
@@ -179,35 +181,85 @@ class TimetableBuilder:
 
 
 class Individual:
-    def __init__(self, ttb: dict[str, EventRealization], fitness: float):
-        self.ttb = ttb
+    def __init__(self, timetable: list[EventRealization], fitness: float):
+        self.timetable = timetable
         self.fitness = fitness
 
 
-def peak_room(needed_capacity: int, rooms: list[Room], prec: int) -> Room:
-    left, right = 0, len(rooms) - 1
-    while left <= right:
-        mid = (left + right) // 2
-        if all(rooms[mid].effective_capacity - i < needed_capacity for i in range(prec + 1)):
-            left = mid + 1
-        elif all(rooms[mid].effective_capacity - i > needed_capacity for i in range(prec + 1)):
-            right = mid - 1
+class GeneticAlgorithm:
+    def __init__(self, data: Database):
+        self.iterations = 10
+        self.population_size = 100
+        self.selected: list[Individual] = []
+        self.initial_population = self.generate_random_population(data)
+
+    def generate_random_population(self, data: Database):
+        """Generates random population of size 100."""
+        timetable = TimetableBuilder(data)
+        population = []
+        for i in range(self.population_size):
+            random_timetable = timetable.build_random()
+            fitness = calculate_fitness(data, random_timetable)
+            population.append(Individual(random_timetable, fitness))
+        return population
+
+    def selection(self, population: list[Individual]) -> tuple[Individual, Individual]:
+        '''Selects 2 individual with a higher fitness from 2 random pairs.'''
+        if first_pair := random.sample(population, 2).sort(key=lambda x: x.fitness) not in self.selected:
+            self.selected.append(first_pair)
+        if second_pair := random.sample(population, 2).sort(key=lambda x: x.fitness) not in self.selected:
+            self.selected.append(second_pair)
+        return first_pair[0], second_pair[0]
+
+    def crossover(self, data: Database, pair: tuple[Individual, Individual]) -> tuple[Individual, Individual]:
+        n_genes_change = random.randint(1, 2)
+        n_crossovers = min(len(pair[0].timetable), len(pair[1].timetable))
+        if n_genes_change == 2:
+            for i in range(n_crossovers):
+                pair[0].timetable[i].grid_slot_id, pair[1].timetable[i].grid_slot_id = \
+                    pair[1].timetable[i].grid_slot_id, pair[0].timetable[i].grid_slot_id
+                pair[0].timetable[i].date, pair[1].timetable[i].date = \
+                    pair[1].timetable[i].date, pair[0].timetable[i].date
         else:
-            return rooms[mid]
+            rnd = random.randint(0, 1)
+            if rnd == 0:
+                for i in range(n_crossovers):
+                    pair[0].timetable[i].grid_slot_id, pair[1].timetable[i].grid_slot_id = \
+                        pair[1].timetable[i].grid_slot_id, pair[0].timetable[i].grid_slot_id
+            else:
+                for i in range(n_crossovers):
+                    pair[0].timetable[i].date, pair[1].timetable[i].date = \
+                        pair[1].timetable[i].date, pair[0].timetable[i].date
+        for i in range(2):
+            pair[i].fitness = calculate_fitness(data, pair[i].timetable)
+        return pair
+
+    def run(self, data: Database) -> list[Individual]:
+        '''Runs GA to find an optimized timetable'''
+        for i in range(self.iterations):
+            next_population = []
+
+            fittest_couple = selection(data, self.initial_population)
+            crossover(data, fittest_couple)
+            next_population.append(fittest_couple[0])
+            next_population.append(fittest_couple[1])
+        i += 1
+        print(len(next_population))
+        return genetic_algorithm(data, population=next_population)
 
 
-# def calculate_exes(data: Database, timetable: dict[str, EventRealization]) -> float:
-# x1 - время затраченное в день на переход между корпусами (в день)
-# x2 - дней когда пар больше 4 (на неделю, с) +
-# x3 - окна (в день с) +
-# x4 - переезды (в день)
-# x5 - шаговая доступность кафедры (в день, п)
-# x6 - концентрированность пар (в день, п)
-# x7 - порядок изложения (на неделю)
-# x8 - напр 1 знания в 1 корпусе (в день)
-# x9 - 1 пара в день (день, с)
-# x10 - есть выходной (неделя, с)
-# x11 - больше 2 пар в субботу (неделя, с) +
+def mutation(data: Database, individual: Individual) -> Individual:
+    pos_to_change = random.randint(0, len(list(individual.timetable.values())))
+    what_to_change = random.randint(0, 1)
+    for i in range(len(individual.timetable.values())):
+        if i == pos_to_change:
+            if what_to_change == 0:
+                list(individual.timetable.values())[pos_to_change].grid_slot_id = data.grid_slots[
+                    random.randint(0, len(data.grid_slots))]
+            else:
+                list(individual.timetable.values())[pos_to_change].date = random.choice(
+                    list(individual.timetable.values())).date
+    return individual
 
 
 def calculate_x2(timetable: list[EventRealization]) -> int:
@@ -248,97 +300,64 @@ def calculate_x11(timetable: list[EventRealization]) -> int:
     return len(saturdays)
 
 
-def calculate_fitness(data: Database, timetable: dict[str, EventRealization]) -> float:
-    classes = list(timetable.values())
+def grid_slot_conflicts(timetable: list[EventRealization]) -> int:
+    _grid_slot_conflicts = Counter({'time_con': 0})
+    for i in range(len(timetable)):
+        for j in range(i + 1, len(timetable)):
+            if timetable[i].date == timetable[j].date:
+                if timetable[i].grid_slot_id == timetable[j].grid_slot_id:
+                    _grid_slot_conflicts["time_con"] += 1
+    return list(_grid_slot_conflicts.values())[0]
+
+
+def capacity_conflicts(data: Database, timetable: list[EventRealization]) -> int:
+    capacity_conflicts: Counter[str, int] = Counter({"capacity_con": 0})
+    for i in range(len(timetable)):
+        if timetable[i].get_room(data.rooms).effective_capacity < len(
+                data.get_event_attendees_by_event(timetable[i].event_id)):
+            capacity_conflicts["capacity_con"] += 1
+    return list(capacity_conflicts.values())[0]
+
+
+def calculate_fitness(data: Database, timetable: list[EventRealization]) -> float:
+    '''Calculates the fitness of a timetable instance.'''
+
     conflicts: Counter[str, int] = Counter()
-    # for i in range(len(classes)):
-    #     for j in range(i + 1, len(classes)):
-    #         if classes[i].date == classes[j].date:
-    #             if classes[i].grid_slot_id == classes[j].grid_slot_id:
-    #                 conflicts["time_con"] += 1
-    #
-    #     if data.get_room(classes[i].room_id).effective_capacity < len(
-    #             data.get_event_attendees_by_event(classes[i].event_id)
-    #     ):
-    #         conflicts["capacity_con"] += 1
-    conflicts["x2"] = calculate_x2(classes)
-    conflicts["x3"] = calculate_x3(classes)
-    conflicts["x11"] = calculate_x11(classes)
+
+    conflicts["x2"] = calculate_x2(timetable)
+    conflicts["x3"] = calculate_x3(timetable)
+    conflicts["x11"] = calculate_x11(timetable)
+    conflicts["grid_slot"] = grid_slot_conflicts(timetable)
+    conflicts["capacity"] = capacity_conflicts(data, timetable)
+    print(conflicts)
     return 1 / (1 + sum(list(conflicts.values())))
 
 
-# сделать таблицу на имикн
-def pop_formation(data: Database, n_pop: int = 100):
-    random.seed(0)
-    ttb = TimetableBuilder(data)
-    population = []
-    for i in range(n_pop):
-        rnd_ttb = ttb.build_random()
-        population.append(Individual(rnd_ttb, calculate_fitness(data, rnd_ttb)))
-    return population
+# takes as a parameter timetable: dict[str, EventRealization], now removed
+def visualize_timetable() -> PrettyTable():
+    '''Visualizes list[EventRealization] as a table.'''
+    imikn_ex = pd.read_csv('modeus-data/Imikn_ex.csv', encoding='latin-1')
+    timetable = PrettyTable(imikn_ex.axes[1].values[0].split(';'))
+    rows = [row[0].split(';') for row in imikn_ex.values][::]
+    changed = ['-' if rows[i][j] == "null" else rows[i][j] for i in range(len(rows)) for j in range(len(rows[i]))]
+    sublists = []
+    sublist_len = len(rows[0])
+    for i in range(len(rows)):
+        sublists.append(changed[sublist_len * i:sublist_len * (i + 1)])
+    timetable.add_rows(sublists)
+    with open('modeus-data/timetable', 'w') as f:
+        f.write(str(timetable))
+    return timetable
 
 
-#  Warning: tournament selection already chosen pairs are possible
-def tournament_selection(population: list[Individual]) -> list[Individual]:
-    CROSSOVER_PROB = 0.9
-    MUTATION_PROB = 0.1
-    fst_pair = np.random.choice(population, 2)
-    scnd_pair = np.random.choice(population, 2)
-    fittest_couple = [max(fst_pair, key=lambda x: x.fitness), max(scnd_pair, key=lambda x: x.fitness)]
-    # action = random.choices([crossver(fittest_couple), ])
-    # return
-
-
-def crossover(couple: list[Individual]) -> list[dict[str, EventRealization]]:
-    partner_1 = list(couple[0].ttb.values())
-    partner_2 = list(couple[1].ttb.values())
-    crossovers_n = min(len(partner_1), len(partner_2))
-    for i in range(crossovers_n):
-        partner_1[i].grid_slot_id, partner_2[i].grid_slot_id = partner_2[i].grid_slot_id, partner_1[i].grid_slot_id
-        partner_1[i].date, partner_2[i].date = partner_2[i].date, partner_1[i].date
-    couple[0].ttb = partner_1
-    couple[1].ttb = partner_2
-    return [couple[0].ttb, couple[1].ttb]
-
-
-def mutation(data: Database, individual: Individual) -> dict[str, EventRealization]:
-    pos_to_change = random.randint(0, len(list(individual.ttb.values())))
-    what_to_change = random.randint(0, 1)
-    for i in range(len(individual.ttb.values())):
-        if i == pos_to_change:
-            if what_to_change == 0:
-                list(individual.ttb.values())[pos_to_change].grid_slot_id = data.grid_slots[
-                    random.randint(0, len(data.grid_slots))]
-            else:
-                list(individual.ttb.values())[pos_to_change].date = random.choice(
-                    list(individual.ttb.values())[random.randint(0, len(list(individual.ttb.values())))]).date
-
-
-def visualise_timetable(timetable: dict[str, EventRealization]) -> PrettyTable():
-    print(list(timetable.values()))
-    # lessons = [data.get_course_unit(list(i.keys())[0]).name for i in subjects]
-    # x = PrettyTable(["Time", "306", "404", "423"])
-    # rows = [
-    #     ["8:30-10:00", "-", "-", "-"],
-    #     ["10:15-11:45", "-", "-", "-"],
-    #     ["12:00-13:30", "-", "-", "-"],
-    #     ["14:00-15:30", "-", "-", "-"],
-    #     ["15:45-17:15", "-", "-", "-"],
-    #     ["15:45-17:15", "-", "-", "-"],
-    #     ["17:00-19:00", "-", "-", "-"],
-    #     ["19:10-20:40", "-", "-", "-"],
-    #     ["20:50-22:20", "-", "-", "-"]
-    # ]
-    #
-    # n = [i for i in range(9)]
-    # res = [[n[i], n[i + 1], n[i + 2]]
-    #        for i in range(len(n) - 2)]
-    # times = random.choice(res)
-    #
-    # rows[times[0]][1] = lessons[0]
-    # rows[times[1]][2] = lessons[1]
-    # rows[times[2]][3] = lessons[2]
-    #
-    # x.add_rows(rows)
-    # print(x)
-    # lessons = [data.get_course_unit(list(i.keys())[0]).name for i in subjects]
+def peak_room(needed_capacity: int, rooms: list[Room], prec: int) -> Room:
+    """Peaks a room for a study session."""
+    left, right = 0, len(rooms) - 1
+    while left <= right:
+        mid = (left + right) // 2
+        if all(rooms[mid].effective_capacity - i < needed_capacity for i in range(prec + 1)):
+            left = mid + 1
+        elif all(rooms[mid].effective_capacity - i > needed_capacity for i in range(prec + 1)):
+            right = mid - 1
+        else:
+            return rooms[mid]

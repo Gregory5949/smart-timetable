@@ -73,6 +73,13 @@
             </Attribute>
           </value>
         </entry>
+        <entry key="/modeus-data/Imikn_ex.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value=";" />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="/modeus-data/academic_calendar_irregular_rule.csv">
           <value>
             <Attribute>
