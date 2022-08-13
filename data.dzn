@@ -1,0 +1,5 @@
+COURSES = {Issledovatel'skaja rabota, Things: Café Culture, Obsuzhdenie
+    realizatsii gruppovogo proekta, Russkij jazyk i kul'tura rechi};
+amount_of_students = array1d(1..4, [21, 26, 48, 4]);
+CLASSES = {208 (ULK-10), 405 (ULK-19), 415 (ULK-05), 403 (ULK-04)};
+capacity = array1d(1..4, [21, 26, 48, 4]);
