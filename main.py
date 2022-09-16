@@ -1,27 +1,21 @@
 import logging
-import transliterate
 from pathlib import Path
 import pymysql
 from timetable_builder import *
+import time
 
 logging.basicConfig(level=logging.INFO)
 
 
 def main():
+    st = time.time()
     data = Database()
     data.load_from_dir(Path("modeus-data"))
-    genetic_algorithm = GeneticAlgorithm(data)
-    first_population = genetic_algorithm.initial_population
-    final_population = genetic_algorithm.run(data)
-    best_first_population = sorted(first_population, key=lambda x: x.fitness)[0]
-    best_final_population = sorted(final_population, key=lambda x: x.fitness)[0]
-    print("First population", '\n', "Fitness: ", best_first_population.fitness)
-
-    print("Final population", '\n', "Fitness: ", best_final_population.fitness)
-    print(calculate_fitness(best_final_population.timetable))
-    for i in best_final_population.timetable:
-
-        print(i.event_id, i.room_id, i.grid_slot_id, i.date)
+    annealing = Annealing(data)
+    annealing.run()
+    et = time.time()
+    elapsed_time = et - st
+    print('Execution time:', elapsed_time, 'seconds')
 
 
 def create_connection(host_name, port, user_name, user_password, db_name):
