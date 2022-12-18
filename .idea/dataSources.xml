@@ -6,7 +6,7 @@
       <synchronize>true</synchronize>
       <remarks>$ psql -h 172.31.133.138 -p 5433 -U postgres -d full</remarks>
       <jdbc-driver>org.postgresql.Driver</jdbc-driver>
-      <jdbc-url>jdbc:postgresql://172.31.133.138:5433/full</jdbc-url>
+      <jdbc-url>jdbc:postgresql://192.168.0.15:8889/full</jdbc-url>
       <working-dir>$ProjectFileDir$</working-dir>
     </data-source>
   </component>

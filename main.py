@@ -2,20 +2,23 @@ import logging
 from pathlib import Path
 import pymysql
 from timetable_builder import *
-import time
 
 logging.basicConfig(level=logging.INFO)
 
 
 def main():
-    st = time.time()
+    # st = time.time()
     data = Database()
     data.load_from_dir(Path("modeus-data"))
+    timetable_builder = TimetableBuilder(data)
+    # timetable_builder.slicer()
     annealing = Annealing(data)
     annealing.run()
-    et = time.time()
-    elapsed_time = et - st
-    print('Execution time:', elapsed_time, 'seconds')
+    # et = time.time()
+    # elapsed_time = et - st
+    # print('Execution time:', elapsed_time, 'seconds')
+    # build_timetable_2_weeks()
+
 
 
 def create_connection(host_name, port, user_name, user_password, db_name):

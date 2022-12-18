@@ -2,20 +2,15 @@ import copy
 import datetime
 import math
 import random
-from collections import Counter
 import numpy as np
-from db import Database
-from models import (
-    EventRealization, Room
-)
-from prettytable import PrettyTable
 import pandas as pd
-from data import my_event_ids, grid_ids, my_timetable_fittest
-from datetime import date
-from pymzn import dzn
+from db import Database
+from models import (EventRealization, Room, Event)
+from collections import Counter
+from prettytable import PrettyTable
+from data import cycle_realizations, grid_ids
 
-
-# random.seed(4)
+random.seed(4)
 
 
 # def calculate_exes(data: Database, timetable: dict[str, EventRealization]) -> float:
@@ -31,6 +26,23 @@ from pymzn import dzn
 # x10 - есть выходной (неделя, с)
 # x11 - больше 2 пар в субботу (неделя, с) +
 
+def get_working_days(n_days) -> list[datetime]:
+    """Gets all the working days in the semester."""
+    working_days: list[datetime] = []
+    start = datetime.datetime(2022, 2, 6)
+    end = datetime.datetime(2022, 7, 10)
+    delta = end - start
+    df = pd.read_csv('modeus-data/academic_calendar_irregular_rule.csv')
+    if n_days < delta.days + 1:
+        for i in range(n_days + 1):
+            day = start + datetime.timedelta(days=i)
+            if day.date() not in df and day.weekday() != 6:
+                working_days.append(day.date())
+    else:
+        print("You can peak only days that are in the semester")
+    return working_days
+
+
 class TimetableBuilder:
     def __init__(
             self,
@@ -38,24 +50,12 @@ class TimetableBuilder:
     ):
         self._data = data
 
-    def get_working_days(self) -> list[datetime]:
-        """Gets all the working days in the semester."""
-        working_days: list[datetime] = []
-        start = datetime.datetime(2022, 2, 6)
-        end = datetime.datetime(2022, 7, 10)
-        delta = end - start
-        for i in range(delta.days + 1):
-            day = start + datetime.timedelta(days=i)
-            if day.date() not in self._data.day_offs and day.weekday() != 6:
-                working_days.append(day.date())
-        return working_days
-
-    def build_random(self, days_n) -> list[EventRealization]:
+    def build_random(self, n_days) -> list[EventRealization]:
         """Builds random timetable for n days. Returns a list of `EventRealization`."""
-        working_days = self.get_working_days()
+        working_days = get_working_days(n_days)
         timetable: list[EventRealization] = []
         rooms_sorted = sorted(self._data.rooms, key=lambda x: x.effective_capacity)
-        for day in working_days[:days_n + 1]:
+        for day in working_days[:n_days + 1]:
             slots = random.choices(grid_ids, k=random.randint(1, 4))
             events = random.choices([event for event in self._data.events if event.capacity_required < 301],
                                     k=len(slots))
@@ -69,6 +69,45 @@ class TimetableBuilder:
     def build_fixed(self) -> dict[str, EventRealization]:
         """Returns a fixed optimal map of `event_id` to `EventRealization`."""
         return my_timetable_fittest
+
+    def slicer(self, total_weeks: int = 18, slice_weeks: int = 3) -> list[Event]:
+
+        events = sorted([event for event in self._data.events for i in cycle_realizations if
+                         event.cycle_realization_id == i], key=lambda x: x.ordinal)
+        course_unit_ids = [event.course_unit_id for event in events]
+
+        cycle_realizations_ids = [event.cycle_realization_id for event in events]
+        distribution = []
+        for i in Counter(course_unit_ids).values():
+
+            if i < total_weeks:
+                d = [int(j > total_weeks - i) for j in range(total_weeks, 0, -1)]
+                distribution.append(d)
+            else:
+                d = [1 for _ in range(total_weeks)]
+                for j in range(i - total_weeks):
+                    d[j] += 1
+                distribution.append(d)
+        print(sorted(cycle_realizations_ids))
+        print(distribution)
+        dist_ = [0] * total_weeks
+        for i, j in Counter(distribution[1]).items():
+            if i == 0:
+                continue
+            step = total_weeks / j
+            for k in range(j):
+                index = 0
+                startIndex = int(step * k)
+                for index in range(startIndex, total_weeks):
+                    if dist_[index] == 0:
+                        dist_[index] = i
+                        break
+                if index == total_weeks:
+                    for index in range(startIndex, 0, -1):
+                        if dist_[index] == 0:
+                            dist_[index] = i
+                            break
+        print(dist_)
 
 
 class Annealing:
@@ -180,7 +219,7 @@ def visualize_timetable() -> PrettyTable():
 
 
 def peak_room(needed_capacity: int, rooms: list[Room], prec: int) -> Room:
-    """Peaks a room for a study session."""
+    """Peaks a room for a study session. Deprecated in generating firm timetable"""
     left, right = 0, len(rooms) - 1
     while left <= right:
         mid = (left + right) // 2
